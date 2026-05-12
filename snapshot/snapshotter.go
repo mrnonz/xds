@@ -10,6 +10,7 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/log"
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"github.com/wongnai/xds/meter"
+	"github.com/wongnai/xds/snapshot/namer"
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
@@ -45,6 +46,12 @@ func mapTypeURL(typeURL string) string {
 type Snapshotter struct {
 	ResyncPeriod time.Duration
 
+	// localCluster, when non-empty, names the xdstp authority this server is
+	// authoritative for. Resources are then emitted under both their bare
+	// local names (for `xds:///foo`) and `xdstp://<localCluster>/<type>/<id>`
+	// (for `xds://<localCluster>/foo`). Empty means local-only emission.
+	localCluster string
+
 	client         kubernetes.Interface
 	servicesCache  cache.SnapshotCache
 	endpointsCache cache.SnapshotCache
@@ -58,7 +65,7 @@ type Snapshotter struct {
 	kubeEventCounter        metric.Int64Counter
 }
 
-func New(client kubernetes.Interface) *Snapshotter {
+func New(client kubernetes.Interface, localCluster string) *Snapshotter {
 	servicesCache := cache.NewSnapshotCache(false, EmptyNodeID{}, Logger)
 	endpointsCache := cache.NewSnapshotCache(false, EmptyNodeID{}, Logger)
 	muxCache := cache.MuxCache{
@@ -76,6 +83,7 @@ func New(client kubernetes.Interface) *Snapshotter {
 
 	ss := &Snapshotter{
 		ResyncPeriod: 10 * time.Minute,
+		localCluster: localCluster,
 
 		client:         client,
 		servicesCache:  servicesCache,
@@ -95,6 +103,18 @@ func New(client kubernetes.Interface) *Snapshotter {
 
 func (s *Snapshotter) MuxCache() *cache.MuxCache {
 	return &s.muxCache
+}
+
+// namers returns the Namers used to emit resources. When localCluster is
+// empty the snapshotter is in local-only mode and emits each resource under
+// its bare name. When localCluster is set, every resource is also emitted
+// under `xdstp://<localCluster>/...` so xdstp federation clients can reach
+// it via `xds://<localCluster>/foo` URLs.
+func (s *Snapshotter) namers() []namer.Namer {
+	if s.localCluster == "" {
+		return []namer.Namer{namer.LocalNamer()}
+	}
+	return []namer.Namer{namer.LocalNamer(), namer.XDSTPNamer(s.localCluster)}
 }
 
 func (s *Snapshotter) Start(stopCtx context.Context) error {

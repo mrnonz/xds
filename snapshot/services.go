@@ -17,6 +17,7 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"github.com/wongnai/xds/meter"
 	"github.com/wongnai/xds/snapshot/apigateway"
+	"github.com/wongnai/xds/snapshot/namer"
 	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/protobuf/types/known/anypb"
 	corev1 "k8s.io/api/core/v1"
@@ -52,9 +53,7 @@ func (s *Snapshotter) startServices(ctx context.Context) error {
 		s.kubeEventCounter.Add(ctx, 1, metric.WithAttributes(meter.ResourceAttrKey.String("services")))
 
 		services := sliceToService(store.List())
-		resources := kubeServicesToResources(services)
-		apiGatewayResources, apiGatewayStats := apigateway.FromKubeServices(services)
-		merged := append(resources, apiGatewayResources...) //nolint:gocritic
+		merged, apiGatewayStats := buildServiceResources(services, s.namers())
 
 		resourcesByType := resourcesToMap(merged)
 		s.setServiceResourcesByType(resourcesByType)
@@ -91,11 +90,37 @@ func sliceToService(s []interface{}) []*corev1.Service {
 	return out
 }
 
+// buildServiceResources runs every Namer in namers over the same Kubernetes
+// service list and concatenates their resource emissions. Stats are taken
+// from the first namer's pass only — they're keyed by original gateway name
+// (namer-independent) so subsequent passes would just overwrite with the
+// same values.
+func buildServiceResources(services []*corev1.Service, namers []namer.Namer) ([]types.Resource, map[string]int) {
+	var merged []types.Resource
+	var apiGatewayStats map[string]int
+
+	for _, n := range namers {
+		merged = append(merged, kubeServicesToResources(services, n)...)
+
+		gwResources, gwStats := apigateway.FromKubeServices(services, n)
+		merged = append(merged, gwResources...)
+
+		if apiGatewayStats == nil {
+			apiGatewayStats = gwStats
+		}
+	}
+
+	return merged, apiGatewayStats
+}
+
 // kubeServicesToResources convert list of Kubernetes services to
 // - Listener for each ports
 // - RouteConfiguration for those listeners
 // - Cluster
-func kubeServicesToResources(services []*corev1.Service) []types.Resource {
+//
+// Every name and inter-resource reference goes through n so the resulting
+// set is self-consistent under one naming namespace (local or xdstp).
+func kubeServicesToResources(services []*corev1.Service, n namer.Namer) []types.Resource {
 	var out []types.Resource
 
 	router, _ := anypb.New(&routerv3.Router{})
@@ -106,8 +131,12 @@ func kubeServicesToResources(services []*corev1.Service) []types.Resource {
 			targetHostPort := net.JoinHostPort(fullName, port.Name)
 			targetHostPortNumber := net.JoinHostPort(fullName, strconv.Itoa(int(port.Port)))
 
+			listenerName := n.NameListener(targetHostPortNumber)
+			routeConfigName := n.NameRouteConfig(targetHostPortNumber)
+			clusterName := n.NameCluster(targetHostPort)
+
 			routeConfig := &routev3.RouteConfiguration{
-				Name: targetHostPortNumber,
+				Name: routeConfigName,
 				VirtualHosts: []*routev3.VirtualHost{
 					{
 						Name:    targetHostPort,
@@ -120,7 +149,7 @@ func kubeServicesToResources(services []*corev1.Service) []types.Resource {
 							Action: &routev3.Route_Route{
 								Route: &routev3.RouteAction{
 									ClusterSpecifier: &routev3.RouteAction_Cluster{
-										Cluster: targetHostPort,
+										Cluster: clusterName,
 									},
 									RetryPolicy: retryPolicyFromService(svc),
 								},
@@ -145,14 +174,14 @@ func kubeServicesToResources(services []*corev1.Service) []types.Resource {
 			})
 
 			svcListener := &listenerv3.Listener{
-				Name: targetHostPortNumber,
+				Name: listenerName,
 				ApiListener: &listenerv3.ApiListener{
 					ApiListener: manager,
 				},
 			}
 
 			svcCluster := &clusterv3.Cluster{
-				Name:                 targetHostPort,
+				Name:                 clusterName,
 				ClusterDiscoveryType: &clusterv3.Cluster_Type{Type: clusterv3.Cluster_EDS},
 				LbPolicy:             clusterv3.Cluster_ROUND_ROBIN,
 				EdsClusterConfig: &clusterv3.Cluster_EdsClusterConfig{
@@ -161,6 +190,7 @@ func kubeServicesToResources(services []*corev1.Service) []types.Resource {
 							Ads: &corev3.AggregatedConfigSource{},
 						},
 					},
+					ServiceName: n.NameEndpoint(targetHostPort),
 				},
 			}
 

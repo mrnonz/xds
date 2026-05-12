@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/wongnai/xds/internal/config"
 	"github.com/wongnai/xds/internal/di"
 	"github.com/wongnai/xds/snapshot/apigateway"
 	"github.com/wongnai/xds/test"
@@ -247,7 +248,7 @@ func (s *XdsIntegrationTestSuite) TestApiGateway() {
 func TestXdsIntegration(t *testing.T) {
 	kube := fake.NewClientset()
 
-	testServer, stop, err := di.InitializeTestServer(t.Context(), kube, 1)
+	testServer, stop, err := di.InitializeTestServer(t.Context(), kube, config.Config{StatsIntervalSeconds: 1})
 	require.NoError(t, err)
 	defer stop()
 

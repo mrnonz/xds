@@ -8,6 +8,7 @@ import (
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"github.com/stretchr/testify/suite"
+	"github.com/wongnai/xds/internal/config"
 	"github.com/wongnai/xds/internal/di"
 	"github.com/wongnai/xds/test"
 	"google.golang.org/grpc"
@@ -30,7 +31,7 @@ func (s *XdsSuite) SetupTest() {
 	var err error
 	s.kube = fake.NewClientset()
 	s.conn = bufconn.Listen(1)
-	s.TestServer, s.stop, err = di.InitializeTestServer(s.T().Context(), s.kube, 1)
+	s.TestServer, s.stop, err = di.InitializeTestServer(s.T().Context(), s.kube, config.Config{StatsIntervalSeconds: 1})
 	s.Require().NoError(err)
 
 	go s.TestServer.GrpcServer.Serve(s.conn)

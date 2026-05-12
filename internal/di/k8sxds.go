@@ -7,6 +7,7 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/server/v3"
 	"github.com/google/wire"
 	"github.com/wongnai/xds/debug"
+	"github.com/wongnai/xds/internal/config"
 	"github.com/wongnai/xds/meter"
 	"github.com/wongnai/xds/report"
 	"github.com/wongnai/xds/snapshot"
@@ -22,9 +23,9 @@ var K8sXdsSet = wire.NewSet(
 	ProvideLRSServer,
 )
 
-func ProvideSnapshotter(ctx context.Context, k8sClient kubernetes.Interface) (*snapshot.Snapshotter, func()) {
+func ProvideSnapshotter(ctx context.Context, k8sClient kubernetes.Interface, cfg config.Config) (*snapshot.Snapshotter, func()) {
 	stopCtx, stop := context.WithCancel(ctx)
-	snapshotter := snapshot.New(k8sClient)
+	snapshotter := snapshot.New(k8sClient, cfg.LocalCluster)
 
 	go func() {
 		err := snapshotter.Start(stopCtx)
@@ -55,8 +56,6 @@ func ProvideDebugServer(snapshotter *snapshot.Snapshotter) *debug.Server {
 	return server
 }
 
-type StatsIntervalSeconds = int64
-
-func ProvideLRSServer(statsIntervalSeconds StatsIntervalSeconds) loadreportingservice.LoadReportingServiceServer {
-	return report.NewServer(report.WithStatsIntervalInSeconds(statsIntervalSeconds))
+func ProvideLRSServer(cfg config.Config) loadreportingservice.LoadReportingServiceServer {
+	return report.NewServer(report.WithStatsIntervalInSeconds(cfg.StatsIntervalSeconds))
 }

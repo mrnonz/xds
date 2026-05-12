@@ -33,6 +33,12 @@ access, which you can find the ClusterRole in [deploy.yml](deploy.yml). It is re
 service. As it use DNS-based discovery, we recommend not to use autoscaling on this service but keep it always at max
 pods.
 
+### Flags
+
+- `--statsinterval=<seconds>` (default `300`): load reporting service stats update interval.
+- `--local-cluster=<name>` (default unset): when set, the server emits each resource under both its bare local name and
+  `xdstp://<name>/...` (gRPC A47 federation). Leave unset for local-only emission. See [Federation](#federation-xdstp-authorities) below.
+
 ### Usage with Nix
 
 The server can be built with Nix Flakes: `nix build '.#'`
@@ -110,6 +116,54 @@ and any API calls to gRPC service `package.name.ExampleService` and `package.nam
 service.
 
 Currently, this feature is not being used in our production.
+
+### Federation (xdstp authorities)
+
+This server can serve its local cluster's resources under a named xDS authority, allowing clients to use
+`xds://<authority>/foo` URLs to explicitly target this cluster. This implements [gRPC A47](https://github.com/grpc/proposal/blob/master/A47-xds-federation.md).
+
+The intended deployment topology is **one xDS server per Kubernetes cluster**. Each server is authoritative only for
+its own cluster. Cross-cluster discovery is handled by gRPC clients via their bootstrap configuration — clients open
+ADS streams directly to remote xDS servers when an authority's URL is used.
+
+#### Server setup
+
+Pass `--local-cluster=<name>` to enable xdstp emission. The server will then emit each resource twice: once under its
+bare local name (for `xds:///foo` URLs) and once under `xdstp://<name>/...` (for `xds://<name>/foo` URLs). The endpoint
+data is identical; the URL form just changes which name the client looks up.
+
+If `--local-cluster` is unset, the server emits only local names — current default behavior, no change.
+
+#### Client bootstrap
+
+To address multiple clusters, list each authority and point it at the corresponding cluster's xDS server URI:
+
+```json
+{
+  "xds_servers": [{"server_uri": "alpha-xds.svc:5000", "channel_creds": [{"type": "insecure"}], "server_features": ["xds_v3"]}],
+  "authorities": {
+    "alpha": {"xds_servers": [{"server_uri": "alpha-xds.svc:5000", "channel_creds": [{"type": "insecure"}], "server_features": ["xds_v3"]}]},
+    "beta":  {"xds_servers": [{"server_uri": "beta-xds.example.com:5000", "channel_creds": [{"type": "insecure"}], "server_features": ["xds_v3"]}]}
+  },
+  "node": { "id": "anything", "locality": {"zone": "k8s"} }
+}
+```
+
+Then in code:
+
+- `xds:///foo.bar:8080` — default-authority URL; resolves via the default `xds_servers`, typically the local cluster's xDS.
+- `xds://alpha/foo.bar:8080` — explicit alpha-cluster endpoints. Resolves via the `alpha` authority's xDS server.
+- `xds://beta/foo.bar:8080` — explicit beta-cluster endpoints. The client opens an ADS stream directly to
+  `beta-xds.example.com:5000`.
+
+Cross-cluster URLs require:
+
+- Network reachability from the calling pod to the remote xDS server URI.
+- The destination service's NetworkPolicy permits traffic from the calling pod.
+- Pod-to-pod reachability between the calling pod's cluster and the destination pods (the xDS response is a list of pod IPs).
+
+`xds://<cluster>/foo` is for **targeting that cluster specifically**. If a service is migrated between clusters, the
+URL won't follow it — that's by design (explicit > magic), but worth being aware of when picking which form to use.
 
 ## Connecting to xDS from various languages
 You'd need to set xDS bootstrap config on your application. Here's the xDS bootstrap file:

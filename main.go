@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"flag"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/wongnai/xds/internal/config"
 	"github.com/wongnai/xds/internal/di"
 	"github.com/wongnai/xds/meter"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
@@ -17,13 +17,11 @@ import (
 func main() {
 	klog.InitFlags(nil)
 
-	var statsIntervalInSeconds int64
-	flag.CommandLine.Int64Var(&statsIntervalInSeconds, "statsinterval", 300, "stats update interval in seconds")
-	flag.Parse()
+	cfg := config.ParseFlags()
 
 	meter.InstallPromExporter()
 
-	servers, stop, err := di.InitializeServer(context.Background(), statsIntervalInSeconds)
+	servers, stop, err := di.InitializeServer(context.Background(), cfg)
 	if err != nil {
 		klog.Fatal(err)
 	}

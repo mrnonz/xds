@@ -4,8 +4,10 @@ package di
 
 import (
 	"context"
+
 	"github.com/google/wire"
 	"github.com/wongnai/xds/debug"
+	"github.com/wongnai/xds/internal/config"
 	"google.golang.org/grpc"
 	"k8s.io/client-go/kubernetes"
 )
@@ -25,7 +27,7 @@ type DevServer struct {
 	GrpcServer *grpc.Server
 }
 
-func InitializeServer(ctx context.Context, statsIntervalSeconds StatsIntervalSeconds) (Servers, func(), error) {
+func InitializeServer(ctx context.Context, cfg config.Config) (Servers, func(), error) {
 	wire.Build(
 		KubernetesSet,
 		GrpcSet,
@@ -38,7 +40,7 @@ func InitializeServer(ctx context.Context, statsIntervalSeconds StatsIntervalSec
 	return Servers{}, nil, nil
 }
 
-func InitializeTestServer(ctx context.Context, kubeClient kubernetes.Interface, statsIntervalSeconds StatsIntervalSeconds) (TestServer, func(), error) {
+func InitializeTestServer(ctx context.Context, kubeClient kubernetes.Interface, cfg config.Config) (TestServer, func(), error) {
 	wire.Build(
 		GrpcSet,
 		K8sXdsSet,

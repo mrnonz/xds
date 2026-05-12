@@ -9,32 +9,33 @@ package di
 import (
 	"context"
 	"github.com/wongnai/xds/debug"
+	"github.com/wongnai/xds/internal/config"
 	"google.golang.org/grpc"
 	"k8s.io/client-go/kubernetes"
 )
 
 // Injectors from wire.go:
 
-func InitializeServer(ctx context.Context, statsIntervalSeconds StatsIntervalSeconds) (Servers, func(), error) {
+func InitializeServer(ctx context.Context, cfg config.Config) (Servers, func(), error) {
 	v := ProvideOtelGrpcServerOptions()
 	server, cleanup := ProvideGrpcServer(v)
-	config, err := ProvideClientConfig()
+	restConfig, err := ProvideClientConfig()
 	if err != nil {
 		cleanup()
 		return Servers{}, nil, err
 	}
-	v2, err := ProvideK8sHTTPTransport(config)
+	v2, err := ProvideK8sHTTPTransport(restConfig)
 	if err != nil {
 		cleanup()
 		return Servers{}, nil, err
 	}
-	v3 := ProvideK8sHTTPClient(v2, config)
-	kubernetesInterface, err := ProvideK8sClient(config, v3)
+	v3 := ProvideK8sHTTPClient(v2, restConfig)
+	kubernetesInterface, err := ProvideK8sClient(restConfig, v3)
 	if err != nil {
 		cleanup()
 		return Servers{}, nil, err
 	}
-	snapshotter, cleanup2 := ProvideSnapshotter(ctx, kubernetesInterface)
+	snapshotter, cleanup2 := ProvideSnapshotter(ctx, kubernetesInterface, cfg)
 	callbackFuncs := ProvideXdsLogger()
 	serverServer, cleanup3 := ProvideXdsServer(ctx, snapshotter, callbackFuncs)
 	sideEffectADSRegistered := ProvideSideEffectADSRegistered(server, serverServer)
@@ -42,7 +43,7 @@ func InitializeServer(ctx context.Context, statsIntervalSeconds StatsIntervalSec
 	sideEffectCDSRegistered := ProvideSideEffectCDSRegistered(server, serverServer)
 	sideEffectRDSRegistered := ProvideSideEffectRDSRegistered(server, serverServer)
 	sideEffectLDSRegistered := ProvideSideEffectLDSRegistered(server, serverServer)
-	loadReportingServiceServer := ProvideLRSServer(statsIntervalSeconds)
+	loadReportingServiceServer := ProvideLRSServer(cfg)
 	sideEffectLRSRegistered := ProvideSideEffectLRSRegistered(server, loadReportingServiceServer)
 	xdsAllSideEffects := XdsAllSideEffects{
 		_ADS: sideEffectADSRegistered,
@@ -76,10 +77,10 @@ func InitializeServer(ctx context.Context, statsIntervalSeconds StatsIntervalSec
 	}, nil
 }
 
-func InitializeTestServer(ctx context.Context, kubeClient kubernetes.Interface, statsIntervalSeconds StatsIntervalSeconds) (TestServer, func(), error) {
+func InitializeTestServer(ctx context.Context, kubeClient kubernetes.Interface, cfg config.Config) (TestServer, func(), error) {
 	v := ProvideGrpcTestOption()
 	server, cleanup := ProvideGrpcServer(v)
-	snapshotter, cleanup2 := ProvideSnapshotter(ctx, kubeClient)
+	snapshotter, cleanup2 := ProvideSnapshotter(ctx, kubeClient, cfg)
 	callbackFuncs := ProvideXdsLogger()
 	serverServer, cleanup3 := ProvideXdsServer(ctx, snapshotter, callbackFuncs)
 	sideEffectADSRegistered := ProvideSideEffectADSRegistered(server, serverServer)
@@ -87,7 +88,7 @@ func InitializeTestServer(ctx context.Context, kubeClient kubernetes.Interface, 
 	sideEffectCDSRegistered := ProvideSideEffectCDSRegistered(server, serverServer)
 	sideEffectRDSRegistered := ProvideSideEffectRDSRegistered(server, serverServer)
 	sideEffectLDSRegistered := ProvideSideEffectLDSRegistered(server, serverServer)
-	loadReportingServiceServer := ProvideLRSServer(statsIntervalSeconds)
+	loadReportingServiceServer := ProvideLRSServer(cfg)
 	sideEffectLRSRegistered := ProvideSideEffectLRSRegistered(server, loadReportingServiceServer)
 	xdsAllSideEffects := XdsAllSideEffects{
 		_ADS: sideEffectADSRegistered,
